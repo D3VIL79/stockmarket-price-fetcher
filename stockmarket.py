@@ -1,0 +1,169 @@
+import requests
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
+import numpy as np
+import datetime
+
+# Alpha Vantage API settings
+API_KEY = ' 0PQ0N79WDU6F3XZD'  # Replace with your Alpha Vantage API key
+BASE_URL = 'https://www.alphavantage.co/query'
+CURRENCY_API_URL = 'https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=USD&to_currency=INR&apikey=' + API_KEY
+
+# Known stock symbols fallback
+KNOWN_SYMBOLS = {
+    'apple': 'AAPL',
+    'microsoft': 'MSFT',
+    'tesla': 'TSLA',
+    'amazon': 'AMZN',
+    'google': 'GOOGL',
+    # Add more known symbols here
+}
+
+# Function to get USD to INR exchange rate
+def get_usd_to_inr_rate():
+    response = requests.get(CURRENCY_API_URL)
+    data = response.json()
+
+    if 'Realtime Currency Exchange Rate' in data:
+        return float(data['Realtime Currency Exchange Rate']['5. Exchange Rate'])
+    else:
+        print(f"Error fetching USD to INR exchange rate: {data.get('Error Message', 'Unknown error')}")
+        return None
+
+# Function to search for stock symbol by name
+def get_stock_symbol_by_name(stock_name):
+    # Convert stock_name to lowercase for case-insensitive comparison
+    stock_name_lower = stock_name.lower()
+
+    # Use fallback if known symbol exists
+    if stock_name_lower in KNOWN_SYMBOLS:
+        return KNOWN_SYMBOLS[stock_name_lower]
+    
+    # Use API search if not in known symbols
+    params = {
+        'function': 'SYMBOL_SEARCH',
+        'keywords': stock_name,
+        'apikey': API_KEY
+    }
+    response = requests.get(BASE_URL, params=params)
+    data = response.json()
+
+    if 'bestMatches' in data and len(data['bestMatches']) > 0:
+        print("Possible matches:")
+        for match in data['bestMatches']:
+            print(f"Symbol: {match['1. symbol']}, Name: {match['2. name']}")
+        
+        # Return the first matching symbol for simplicity
+        symbol = data['bestMatches'][0]['1. symbol']
+        return symbol
+    else:
+        print(f"Error: No symbol found for {stock_name}")
+        return None
+
+# Function to get historical daily stock data
+def get_historical_data(symbol):
+    params = {
+        'function': 'TIME_SERIES_DAILY',
+        'symbol': symbol,
+        'apikey': API_KEY
+    }
+    response = requests.get(BASE_URL, params=params)
+    data = response.json()
+
+    if 'Time Series (Daily)' in data:
+        return data['Time Series (Daily)']
+    else:
+        print(f"Error fetching historical data for {symbol}")
+        return None
+
+# Function to plot stock price data and show predictions
+def plot_stock_data_and_predict(stock_data, stock_symbol):
+    dates = []
+    prices = []
+    
+    for date, data in sorted(stock_data.items()):
+        dates.append(date)
+        prices.append(float(data['4. close']))
+
+    # Convert dates to numerical values for regression
+    date_nums = np.array([i for i in range(len(dates))]).reshape(-1, 1)
+    prices = np.array(prices).reshape(-1, 1)
+
+    # Plot stock prices
+    plt.figure(figsize=(10, 5))
+    plt.plot(dates, prices, label=f'{stock_symbol} Stock Prices', color='blue', marker='o')
+    
+    # Apply simple linear regression for prediction
+    model = LinearRegression()
+    model.fit(date_nums, prices)
+    
+    # Predict the next day’s price
+    next_day = len(dates)
+    predicted_price = model.predict([[next_day]])
+    future_date = (datetime.datetime.strptime(dates[-1], "%Y-%m-%d") + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    # Plot prediction
+    plt.plot(future_date, predicted_price, marker='x', color='red', label=f'Prediction ({future_date}): ${predicted_price[0][0]:.2f}')
+    
+    # Formatting the plot
+    plt.xlabel('Date')
+    plt.ylabel('Price (USD)')
+    plt.xticks(rotation=45)
+    plt.title(f'{stock_symbol} Stock Prices and Prediction')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+    
+    print(f'Predicted Price for {future_date}: ${predicted_price[0][0]:.2f}')
+
+# Function to get real-time stock price in both USD and INR
+def get_real_time_price(symbol):
+    params = {
+        'function': 'TIME_SERIES_INTRADAY',
+        'symbol': symbol,
+        'interval': '1min',
+        'apikey': API_KEY
+    }
+    response = requests.get(BASE_URL, params=params)
+    data = response.json()
+
+    if 'Time Series (1min)' in data:
+        latest_time = next(iter(data['Time Series (1min)']))
+        latest_data = data['Time Series (1min)'][latest_time]
+        usd_price = float(latest_data['1. open'])
+
+        # Get USD to INR conversion rate
+        inr_rate = get_usd_to_inr_rate()
+        if inr_rate:
+            inr_price = usd_price * inr_rate
+            return usd_price, inr_price
+        else:
+            return usd_price, None
+    else:
+        print(f"Error fetching data for {symbol}: {data.get('Error Message', 'Unknown error')}")
+        return None, None
+
+# Example Usage
+if __name__ == '__main__':
+    # Get stock name from user input
+    stock_name = input("Enter the stock name: ")
+
+    # Get stock symbol from the stock name
+    stock_symbol = get_stock_symbol_by_name(stock_name)
+
+    if stock_symbol:
+        # Get real-time price in both USD and INR for the given stock symbol
+        usd_price, inr_price = get_real_time_price(stock_symbol)
+        
+        if usd_price and inr_price:
+            print(f'Real-Time Price of {stock_symbol} ({stock_name}): ${usd_price} USD | ₹{inr_price:.2f} INR')
+        elif usd_price:
+            print(f'Real-Time Price of {stock_symbol} ({stock_name}): ${usd_price} USD (INR price unavailable)')
+        else:
+            print(f"Could not fetch price for {stock_symbol} ({stock_name})")
+        
+        # Fetch historical data and plot graph with prediction
+        historical_data = get_historical_data(stock_symbol)
+        if historical_data:
+            plot_stock_data_and_predict(historical_data, stock_symbol)
